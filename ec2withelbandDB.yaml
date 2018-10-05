@@ -113,12 +113,6 @@ Resources:
         Ref: KeyName
       ImageId: {'Fn::If': [UseDefaultAMI, {'Fn::FindInMap': [NatRegionMap, {Ref: 'AWS::Region'}, AMI]}, {Ref: MyAMI}]}
       SubnetId: !Ref WebServerSubnet
-      UserData:
-        Fn::Base64:
-          !Sub |
-            #!/bin/bash -x
-            yum install -y httpd 
-            systemctl start httpd
 
   ElbProd:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
