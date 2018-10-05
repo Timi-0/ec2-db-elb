@@ -1,0 +1,185 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates an elastic loadbalancer and an ec2 instance connected to the ec2 instance.
+
+Parameters:
+
+  VPC:
+    Description: Lists existing Vpc to choose from
+    Type: AWS::EC2::VPC::Id
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  
+  WebServerSG:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: Creates a multiselect box for existing security groups
+
+  MyAMI: 
+    Description: Type the AMI ID to use for creating the EC2 instance - Leave blank to use default AMI for this region
+    AllowedPattern: (ami-[0-9a-f]{8}){0,1}
+    Default: ""
+    Type: String
+
+  DBSnapshot:
+    Type: String
+    Description: The database snapshot you want to create the ami from
+
+  WebServerSubnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: Lists existing subnets to choose from 
+
+  DataBaseSubnet:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Lists existing subnets to choose from
+
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.small
+    AllowedValues:
+    - t1.micro
+    - t2.nano
+    - t2.micro
+    - t2.small
+    - t2.medium
+    - t2.large
+    - m1.small
+    - m1.medium
+    - m1.large
+    - m1.xlarge
+    - m2.xlarge
+    - m2.2xlarge
+    - m2.4xlarge
+    - m3.medium
+    - m3.large
+    - m3.xlarge
+    - m3.2xlarge
+    - m4.large
+    - m4.xlarge
+    - m4.2xlarge
+    - m4.4xlarge
+    - m4.10xlarge
+    - c1.medium
+    - c1.xlarge
+    - c3.large
+    - c3.xlarge
+    - c3.2xlarge
+    - c3.4xlarge
+    - c3.8xlarge
+    - c4.large
+    - c4.xlarge
+    - c4.2xlarge
+    - c4.4xlarge
+    - c4.8xlarge
+    - g2.2xlarge
+    - g2.8xlarge
+    - r3.large
+    - r3.xlarge
+    - r3.2xlarge
+    - r3.4xlarge
+    - r3.8xlarge
+    - i2.xlarge
+    - i2.2xlarge
+    - i2.4xlarge
+    - i2.8xlarge
+    - d2.xlarge
+    - d2.2xlarge
+    - d2.4xlarge
+    - d2.8xlarge
+    - hi1.4xlarge
+    - hs1.8xlarge
+    - cr1.8xlarge
+    - cc2.8xlarge
+    - cg1.4xlarge
+    ConstraintDescription: must be a valid EC2 instance type.
+Conditions:
+    UseDefaultAMI: {'Fn::Equals': [{Ref: MyAMI}, ""]} 
+
+Mappings:
+  NatRegionMap: {us-east-1: {AMI: ami-01945499792201081}, us-west-1: {AMI: ami-a98396ec}, us-west-2: {AMI: ami-290f4119}, eu-west-1: {AMI: ami-14913f63}, eu-central-1: {AMI: ami-ae380eb3}, sa-east-1: {AMI: ami-8122969c}, ap-southeast-1: {AMI: ami-ebd47f88}, ap-southeast-2: {AMI: ami-ebd47f88}, ap-northeast-1: {AMI: ami-27d6e626}}
+
+Resources:
+
+  WebServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType:
+        Ref: InstanceType
+      SecurityGroupIds: !Ref WebServerSG
+      KeyName:
+        Ref: KeyName
+      ImageId: {'Fn::If': [UseDefaultAMI, {'Fn::FindInMap': [NatRegionMap, {Ref: 'AWS::Region'}, AMI]}, {Ref: MyAMI}]}
+      SubnetId: !Ref WebServerSubnet
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -x
+            yum install -y httpd 
+            systemctl start httpd
+
+  ElbProd:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      CrossZone: 'true'
+      Instances:
+      - Ref: WebServer
+      Listeners:
+      - LoadBalancerPort: '80'
+        InstancePort: '80'
+        Protocol: HTTP
+      HealthCheck:
+        Target: HTTP:80/
+        HealthyThreshold: '3'
+        UnhealthyThreshold: '5'
+        Interval: '30'
+        Timeout: '5'
+      ConnectionDrainingPolicy:
+        Enabled: 'true'
+        Timeout: '60'
+      Tags:
+        - Key: Name
+          Value: ELBPROD
+      Subnets:
+        - !Ref WebServerSubnet
+
+  DataBaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Open database for access
+      VpcId: !Ref VPC
+  DSSGIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: "3306"
+      ToPort: "3306"
+      GroupId: !Ref DataBaseSecurityGroup
+      IpProtocol: tcp
+      SourceSecurityGroupId: !Ref DataBaseSecurityGroup
+
+  DataBaseSubtNetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets for the database
+      SubnetIds: !Ref DataBaseSubnet
+
+  DataBase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: '5'
+      DBInstanceClass: db.t2.micro
+      DBInstanceIdentifier: DataBaseInstance
+      DBName: DatabaseName
+      DBSubnetGroupName: !Ref DataBaseSubtNetGroup
+      Engine: MySQL
+      MasterUsername: UserName
+      MasterUserPassword: UserPassword
+      PubliclyAccessible: true
+      VPCSecurityGroups:
+        - !Ref DataBaseSecurityGroup
+      DBInstanceIdentifier: !Ref DBSnapshot
+    DeletionPolicy: Snapshot
+
+
